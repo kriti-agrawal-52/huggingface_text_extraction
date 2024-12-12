@@ -3,6 +3,7 @@ import tracemalloc
 import time
 import logging
 from typing import Optional
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -17,9 +18,9 @@ logging.basicConfig(
 # Logger for debugging (upper layer log file already exists)
 debug_logger = logging.getLogger("api_debug")
 
-def initialize_tokenizer(model_name):
+async def initialize_tokenizer(model_name: str) -> AutoTokenizer:
     """
-    Initializes and returns the tokenizer for the given model name.
+    Asynchronously initializes and returns the tokenizer for the given model name.
 
     Args:
         model_name (str): The name of the model.
@@ -28,7 +29,8 @@ def initialize_tokenizer(model_name):
         AutoTokenizer: The initialized tokenizer.
     """
     try:
-        tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer = await asyncio.to_thread(
+            AutoTokenizer.from_pretrained,
             model_name,
             trust_remote_code=True
         )
@@ -38,9 +40,9 @@ def initialize_tokenizer(model_name):
         debug_logger.error(f"Error initializing tokenizer for model {model_name}: {e}")
         raise
 
-def initialize_model(model_name):
+async def initialize_model(model_name: str) -> AutoModel:
     """
-    Initializes and returns the model for the given model name.
+    Asynchronously initializes and returns the model for the given model name.
 
     Args:
         model_name (str): The name of the model.
@@ -49,21 +51,21 @@ def initialize_model(model_name):
         AutoModel: The initialized model.
     """
     try:
-        model = AutoModel.from_pretrained(
+        return await asyncio.to_thread(
+            AutoModel.from_pretrained,
             model_name,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
             use_safetensors=True,
             device_map="auto"
         )
-        return model
     except Exception as e:
         debug_logger.error(f"Error initializing model {model_name}: {e}")
         raise
 
-def call_model(image_file, model_name):
+async def call_model(image_file: str, model_name: str) -> Optional[str]:
     """
-    Benchmarks the model's chat function for execution time and memory usage.
+    Asynchronously benchmarks the model's chat function for execution time and memory usage.
 
     Args:
         image_file (str): The input image file.
@@ -74,8 +76,8 @@ def call_model(image_file, model_name):
     """
     # Initialize tokenizer and model
     try:
-        tokenizer = initialize_tokenizer(model_name)
-        model = initialize_model(model_name)
+        tokenizer = await initialize_tokenizer(model_name)
+        model = await initialize_model(model_name)
     except Exception as e:
         debug_logger.error(f"Error during initialization of tokenizer or model for {model_name}: {e}")
         return None  # Handle the error and return None
@@ -87,14 +89,17 @@ def call_model(image_file, model_name):
     attempt = 0
     max_retries = 3
     res: Optional[str] = None
-    """- Optional[str] indicates that res can be either a string (str) or None.
-       - This is helpful in contexts where res might hold a meaningful string result or remain None due to an error.
-    """
 
     while attempt < max_retries:
         try:
             # Attempt to execute the model's chat function
-            res = model.chat(tokenizer, image_file, ocr_type='format', render=True)
+            res = await asyncio.to_thread(
+                model.chat,
+                tokenizer,
+                image_file,
+                ocr_type='format',
+                render=True
+            )
             break  # If successful, exit the retry loop
         except Exception as e:
             attempt += 1
@@ -120,4 +125,3 @@ def call_model(image_file, model_name):
 
     # Return the result or None if errors occurred
     return res
-
