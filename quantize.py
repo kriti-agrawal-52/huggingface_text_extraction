@@ -1,73 +1,91 @@
 import torch
-import torch.nn as nn
 from torch.quantization import quantize_dynamic
-import transformers
 from transformers import AutoModel
-from config import MODEL_NAME, QUANTIZE_SAVE_PATH 
+from config import MODEL_NAME, QUANTIZE_SAVE_PATH
 from pathlib import Path
-import time
+import logging
+import asyncio
 
-model = AutoModel.from_pretrained(
-    MODEL_NAME,
-    trust_remote_code=True,
-    low_cpu_mem_usage=True,
-    use_safetensors=True,
-    device_map="auto"  # Automatically distribute across available devices
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("quantize_debug.log"),
+        logging.StreamHandler()
+    ]
 )
 
-def quantize_model(model):
+async def load_pretrained_model(model_name: str):
     """
-    Dynamically quantizes a Hugging Face model to torch.qint8.
-
-    Parameters:
-        model (torch.nn.Module): The pre-trained model to be quantized.
-
-    Returns:
-        torch.nn.Module: The quantized model.
+    Asynchronously loads a pre-trained model.
     """
+    logging.info(f"Loading pre-trained model: {model_name}")
     try:
-        # Dynamically quantize the model
-        quantized_model = quantize_dynamic(
-            model,  # The original model
-            {torch.nn.Linear},  # Layers to quantize
-            dtype=torch.qint8  # Fixed to qint8 for dynamic quantization
+        return await asyncio.to_thread(
+            AutoModel.from_pretrained,
+            model_name,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            device_map="auto"
         )
-        return quantized_model
     except Exception as e:
+        logging.error(f"Failed to load model: {e}")
+        raise RuntimeError(f"Model loading failed: {str(e)}")
+
+async def quantize_model(model):
+    """
+    Asynchronously quantizes a Hugging Face model to torch.qint8.
+    """
+    logging.info("Starting quantization...")
+    try:
+        return await asyncio.to_thread(
+            quantize_dynamic,
+            model,
+            {torch.nn.Linear},
+            dtype=torch.qint8
+        )
+    except Exception as e:
+        logging.error(f"Quantization failed: {e}")
         raise RuntimeError(f"Quantization failed: {str(e)}")
 
-def save_model(model):
+async def save_quantized_model(quantized_model, save_path: str):
     """
-    Saves a quantized model's state dictionary to a specified path.
-    Retries saving up to three times if it fails.
-
-    Parameters:
-        model (torch.nn.Module): The original model to quantize and save.
-
-    Returns:
-        str or None: The path to the saved model, or None if saving fails after retries.
+    Asynchronously saves a quantized model's state dictionary.
     """
-    save_path = Path(QUANTIZE_SAVE_PATH)
+    save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-
     try:
-        quantized_model = quantize_model(model)  # Quantize the model
-    except RuntimeError as e:
-        print(f"Error during quantization: {e}")
+        await asyncio.to_thread(torch.save, quantized_model.state_dict(), save_path)
+        if save_path.exists() and save_path.stat().st_size > 0:
+            logging.info(f"Quantized model saved successfully at {save_path}")
+    except Exception as e:
+        logging.error(f"Failed to save the quantized model: {e}")
+        raise RuntimeError(f"Failed to save the quantized model: {str(e)}")
+
+async def create_and_save_quantized_model(model_name: str, save_path: str):
+    """
+    Asynchronously orchestrates the process of loading, quantizing, and saving a model.
+    """
+    logging.info("Starting the quantization process...")
+    try:
+        model = await load_pretrained_model(model_name)
+        
+        for attempt in range(3):
+            try:
+                logging.info(f"Attempt {attempt + 1} to quantize the model...")
+                quantized_model = await quantize_model(model)
+                break
+            except Exception as e:
+                logging.error(f"Quantization attempt {attempt + 1} failed: {e}")
+                if attempt == 2:
+                    raise RuntimeError("Quantization failed after 3 attempts.")
+                await asyncio.sleep(2)
+        
+        await save_quantized_model(quantized_model, save_path)
+        logging.info(f"Quantized model process completed successfully. Saved at {save_path}")
+        return save_path
+    except Exception as e:
+        logging.error(f"Quantization process failed: {e}")
         return None
-
-    for attempt in range(3):  # Retry up to 3 times
-        try:
-            torch.save(quantized_model.state_dict(), save_path)
-            if save_path.exists() and save_path.stat().st_size > 0:
-                return str(save_path)  # Return the path if save is successful
-        except Exception as e:
-            print(f"Attempt {attempt + 1} failed: {e}")
-        time.sleep(2)  # Wait before retrying
-
-    return None  # Return None if all attempts fail
-
-if __name__ == "__main__":
-    # Attempt to save the quantized model
-    saved_path = save_model(model)
-    print(saved_path)
