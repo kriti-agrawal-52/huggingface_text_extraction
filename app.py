@@ -27,4 +27,4 @@ async def large_model_extraction(
     if extracted_text:
         return {"extracted_text": extracted_text}
     else:
-        return {"detail": "Text extraction failed"}
+        return {"detail": "Text extraction failed. Please try again later."}
