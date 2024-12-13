@@ -1,0 +1,9 @@
+accelerate==1.2.0
+fastapi==0.115.6
+numpy==1.26.4
+tiktoken==0.8.0
+torch==2.2.2
+torchvision==0.17.2
+transformers==4.47.0
+uvicorn==0.32.1
+verovio==4.4.0
