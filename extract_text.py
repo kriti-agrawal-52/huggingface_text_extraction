@@ -4,6 +4,9 @@ import time
 import logging
 from typing import Optional
 import asyncio
+from PIL import Image
+from io import BytesIO
+import tempfile
 
 # Configure logging
 logging.basicConfig(
@@ -63,7 +66,7 @@ async def initialize_model(model_name: str) -> AutoModel:
         debug_logger.error(f"Error initializing model {model_name}: {e}")
         raise
 
-async def call_model(image_file: str, model_name: str) -> Optional[str]:
+async def call_model(uploaded_file, model_name: str) -> Optional[str]:
     """
     Asynchronously benchmarks the model's chat function for execution time and memory usage.
 
@@ -92,11 +95,28 @@ async def call_model(image_file: str, model_name: str) -> Optional[str]:
 
     while attempt < max_retries:
         try:
+            # Read the image as bytes and open it with Pillow
+            image_bytes = await uploaded_file.read()
+            image = Image.open(BytesIO(image_bytes))
+
+            # Create a temporary file for the image
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=True) as temp_file:
+                # Save the image to the temporary file
+                image.save(temp_file.name, format=image.format)
+            
+            # Log superficial details about the saved image
+                temp_file_size = temp_file.tell()
+                debug_logger.info({
+                    "temp_file_path": temp_file.name,
+                    "image_format": image.format,
+                    "image_size": image.size,  # (width, height)
+                    "file_size_bytes": temp_file_size
+                })
             # Attempt to execute the model's chat function
             res = await asyncio.to_thread(
                 model.chat,
                 tokenizer,
-                image_file,
+                temp_file.name,
                 ocr_type='format',
                 render=True
             )
